@@ -23,6 +23,28 @@ import (
 // CanonicalHeaderKey.
 type Header map[string][]string
 
+// HeaderOrderKey is a magic key for ResponseWriter.Header map keys
+// that, if present, defines a header order that will be used to
+// write the headers onto wire. The order of the slice defined how the headers
+// will be sorted. A defined key goes before an undefined key.
+//
+// This is the only way to specify some order, because maps don't
+// have a stable iteration order. If no order is given, headers will
+// be sorted lexicographically.
+//
+// According to RFC2616 it is good practice to send general-header fields
+// first, followed by request-header or response-header fields and ending
+// with entity-header fields.
+const HeaderOrderKey = "Header-Order:"
+
+// PseudoHeaderOrderKey is a magic key for setting HTTP/2 pseudo-header order.
+// If the header is nil it will use regular GoLang header order.
+//
+// Valid fields are :authority, :method, :path, :scheme
+//
+// Warning: all those fields MUST be present.
+const PseudoHeaderOrderKey = "PseudoHeader-Order:"
+
 // Add adds the key, value pair to the header.
 // It appends to any existing values associated with key.
 // The key is case insensitive; it is canonicalized by
@@ -140,41 +162,75 @@ func (w stringWriter) WriteString(s string) (n int, err error) {
 	return w.w.Write([]byte(s))
 }
 
-type keyValues struct {
-	key    string
-	values []string
+type HeaderKeyValues struct {
+	Key    string
+	Values []string
 }
 
-// A headerSorter implements sort.Interface by sorting a []keyValues
-// by key. It's used as a pointer, so it can fit in a sort.Interface
+// A headerSorter implements sort.Interface by sorting a []HeaderKeyValues
+// by the given order, if not nil, or by key otherwise.
+// It's used as a pointer, so it can fit in a sort.Interface
 // interface value without allocation.
 type headerSorter struct {
-	kvs []keyValues
+	kvs   []HeaderKeyValues
+	order map[string]int
 }
 
-func (s *headerSorter) Len() int           { return len(s.kvs) }
-func (s *headerSorter) Swap(i, j int)      { s.kvs[i], s.kvs[j] = s.kvs[j], s.kvs[i] }
-func (s *headerSorter) Less(i, j int) bool { return s.kvs[i].key < s.kvs[j].key }
+func (s *headerSorter) Len() int      { return len(s.kvs) }
+func (s *headerSorter) Swap(i, j int) { s.kvs[i], s.kvs[j] = s.kvs[j], s.kvs[i] }
+func (s *headerSorter) Less(i, j int) bool {
+	// If the order isn't defined, sort lexicographically.
+	if s.order == nil {
+		return s.kvs[i].Key < s.kvs[j].Key
+	}
+	idxi, iok := s.order[strings.ToLower(s.kvs[i].Key)]
+	idxj, jok := s.order[strings.ToLower(s.kvs[j].Key)]
+	if !iok && !jok {
+		return s.kvs[i].Key < s.kvs[j].Key
+	} else if !iok && jok {
+		return false
+	} else if iok && !jok {
+		return true
+	}
+	return idxi < idxj
+}
 
 var headerSorterPool = sync.Pool{
 	New: func() any { return new(headerSorter) },
 }
 
-// sortedKeyValues returns h's keys sorted in the returned kvs
+// SortedKeyValues returns h's keys sorted in the returned kvs
 // slice. The headerSorter used to sort is also returned, for possible
 // return to headerSorterCache.
-func (h Header) sortedKeyValues(exclude map[string]bool) (kvs []keyValues, hs *headerSorter) {
+func (h Header) SortedKeyValues(exclude map[string]bool) (kvs []HeaderKeyValues, hs *headerSorter) {
 	hs = headerSorterPool.Get().(*headerSorter)
 	if cap(hs.kvs) < len(h) {
-		hs.kvs = make([]keyValues, 0, len(h))
+		hs.kvs = make([]HeaderKeyValues, 0, len(h))
 	}
 	kvs = hs.kvs[:0]
 	for k, vv := range h {
 		if !exclude[k] {
-			kvs = append(kvs, keyValues{k, vv})
+			kvs = append(kvs, HeaderKeyValues{k, vv})
 		}
 	}
 	hs.kvs = kvs
+	sort.Sort(hs)
+	return kvs, hs
+}
+
+func (h Header) SortedKeyValuesBy(order map[string]int, exclude map[string]bool) (kvs []HeaderKeyValues, hs *headerSorter) {
+	hs = headerSorterPool.Get().(*headerSorter)
+	if cap(hs.kvs) < len(h) {
+		hs.kvs = make([]HeaderKeyValues, 0, len(h))
+	}
+	kvs = hs.kvs[:0]
+	for k, vv := range h {
+		if !exclude[k] {
+			kvs = append(kvs, HeaderKeyValues{k, vv})
+		}
+	}
+	hs.kvs = kvs
+	hs.order = order
 	sort.Sort(hs)
 	return kvs, hs
 }
@@ -191,20 +247,35 @@ func (h Header) writeSubset(w io.Writer, exclude map[string]bool, trace *httptra
 	if !ok {
 		ws = stringWriter{w}
 	}
-	kvs, sorter := h.sortedKeyValues(exclude)
+	var kvs []HeaderKeyValues
+	var sorter *headerSorter
+	// Check if the HeaderOrder is defined.
+	if headerOrder, ok := h[HeaderOrderKey]; ok {
+		order := make(map[string]int)
+		for i, v := range headerOrder {
+			order[v] = i
+		}
+		if exclude == nil {
+			exclude = make(map[string]bool)
+		}
+		exclude[HeaderOrderKey] = true
+		kvs, sorter = h.SortedKeyValuesBy(order, exclude)
+	} else {
+		kvs, sorter = h.SortedKeyValues(exclude)
+	}
 	var formattedVals []string
 	for _, kv := range kvs {
-		if !httpguts.ValidHeaderFieldName(kv.key) {
+		if !httpguts.ValidHeaderFieldName(kv.Key) {
 			// This could be an error. In the common case of
 			// writing response headers, however, we have no good
 			// way to provide the error back to the server
 			// handler, so just drop invalid headers instead.
 			continue
 		}
-		for _, v := range kv.values {
+		for _, v := range kv.Values {
 			v = headerNewlineToSpace.Replace(v)
 			v = textproto.TrimString(v)
-			for _, s := range []string{kv.key, ": ", v, "\r\n"} {
+			for _, s := range []string{kv.Key, ": ", v, "\r\n"} {
 				if _, err := ws.WriteString(s); err != nil {
 					headerSorterPool.Put(sorter)
 					return err
@@ -215,7 +286,7 @@ func (h Header) writeSubset(w io.Writer, exclude map[string]bool, trace *httptra
 			}
 		}
 		if trace != nil && trace.WroteHeaderField != nil {
-			trace.WroteHeaderField(kv.key, formattedVals)
+			trace.WroteHeaderField(kv.Key, formattedVals)
 			formattedVals = nil
 		}
 	}
