@@ -14,7 +14,6 @@ import (
 
 	"github.com/ooni/oohttp/httptrace"
 	"github.com/ooni/oohttp/internal/ascii"
-	"golang.org/x/net/http/httpguts"
 )
 
 // A Header represents the key-value pairs in an HTTP header.
@@ -199,6 +198,8 @@ var headerSorterPool = sync.Pool{
 	New: func() any { return new(headerSorter) },
 }
 
+var mutex = &sync.RWMutex{}
+
 // SortedKeyValues returns h's keys sorted in the returned kvs
 // slice. The headerSorter used to sort is also returned, for possible
 // return to headerSorterCache.
@@ -209,9 +210,11 @@ func (h Header) SortedKeyValues(exclude map[string]bool) (kvs []HeaderKeyValues,
 	}
 	kvs = hs.kvs[:0]
 	for k, vv := range h {
+		mutex.RLock()
 		if !exclude[k] {
 			kvs = append(kvs, HeaderKeyValues{k, vv})
 		}
+		mutex.RUnlock()
 	}
 	hs.kvs = kvs
 	sort.Sort(hs)
@@ -225,13 +228,16 @@ func (h Header) SortedKeyValuesBy(order map[string]int, exclude map[string]bool)
 	}
 	kvs = hs.kvs[:0]
 	for k, vv := range h {
+		mutex.RLock()
 		if !exclude[k] {
 			kvs = append(kvs, HeaderKeyValues{k, vv})
 		}
+		mutex.RUnlock()
 	}
 	hs.kvs = kvs
 	hs.order = order
 	sort.Sort(hs)
+
 	return kvs, hs
 }
 
@@ -247,8 +253,10 @@ func (h Header) writeSubset(w io.Writer, exclude map[string]bool, trace *httptra
 	if !ok {
 		ws = stringWriter{w}
 	}
+
 	var kvs []HeaderKeyValues
 	var sorter *headerSorter
+
 	// Check if the HeaderOrder is defined.
 	if headerOrder, ok := h[HeaderOrderKey]; ok {
 		order := make(map[string]int)
@@ -258,20 +266,17 @@ func (h Header) writeSubset(w io.Writer, exclude map[string]bool, trace *httptra
 		if exclude == nil {
 			exclude = make(map[string]bool)
 		}
+		mutex.Lock()
 		exclude[HeaderOrderKey] = true
+		exclude[PseudoHeaderOrderKey] = true
+		mutex.Unlock()
 		kvs, sorter = h.SortedKeyValuesBy(order, exclude)
 	} else {
 		kvs, sorter = h.SortedKeyValues(exclude)
 	}
+
 	var formattedVals []string
 	for _, kv := range kvs {
-		if !httpguts.ValidHeaderFieldName(kv.Key) {
-			// This could be an error. In the common case of
-			// writing response headers, however, we have no good
-			// way to provide the error back to the server
-			// handler, so just drop invalid headers instead.
-			continue
-		}
 		for _, v := range kv.Values {
 			v = headerNewlineToSpace.Replace(v)
 			v = textproto.TrimString(v)
