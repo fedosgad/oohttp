@@ -100,6 +100,19 @@ var headerWriteTests = []struct {
 		"Content-Type: text/html; charset=UTF-8\r\n" +
 			"NewlineInValue: 1  Bar: 2\r\n",
 	},
+	// Test sorting headers by the special Header-Order header
+	{
+		Header{
+			"a":            {"2"},
+			"b":            {"3"},
+			"e":            {"1"},
+			"c":            {"5"},
+			"d":            {"4"},
+			HeaderOrderKey: {"e", "a", "b", "d", "c"},
+		},
+		nil,
+		"e: 1\r\na: 2\r\nb: 3\r\nd: 4\r\nc: 5\r\n",
+	},
 }
 
 func TestHeaderWrite(t *testing.T) {

@@ -8,7 +8,7 @@
 package http2
 
 import (
-	"net/http/httptrace"
+	"github.com/ooni/oohttp/httptrace"
 	"net/textproto"
 )
 

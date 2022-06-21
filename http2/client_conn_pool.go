@@ -8,9 +8,8 @@ package http2
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
-	"net/http"
+	"github.com/ooni/oohttp"
 	"sync"
 )
 
@@ -157,7 +156,7 @@ func (c *dialCall) dial(ctx context.Context, addr string) {
 // This code decides which ones live or die.
 // The return value used is whether c was used.
 // c is never closed.
-func (p *clientConnPool) addConnIfNeeded(key string, t *Transport, c *tls.Conn) (used bool, err error) {
+func (p *clientConnPool) addConnIfNeeded(key string, t *Transport, c http.TLSConn) (used bool, err error) {
 	p.mu.Lock()
 	for _, cc := range p.conns[key] {
 		if cc.CanTakeNewRequest() {
@@ -193,7 +192,7 @@ type addConnCall struct {
 	err  error
 }
 
-func (c *addConnCall) run(t *Transport, key string, tc *tls.Conn) {
+func (c *addConnCall) run(t *Transport, key string, tc http.TLSConn) {
 	cc, err := t.NewClientConn(tc)
 
 	p := c.p

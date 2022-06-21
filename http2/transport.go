@@ -15,14 +15,15 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"github.com/ooni/oohttp"
+	"github.com/ooni/oohttp/httptrace"
+	"golang.org/x/net/http/httpguts"
 	"io"
 	"io/ioutil"
 	"log"
 	"math"
 	mathrand "math/rand"
 	"net"
-	"net/http"
-	"net/http/httptrace"
 	"net/textproto"
 	"sort"
 	"strconv"
@@ -31,7 +32,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"golang.org/x/net/http/httpguts"
 	"golang.org/x/net/http2/hpack"
 	"golang.org/x/net/idna"
 )
@@ -196,7 +196,7 @@ func configureTransports(t1 *http.Transport) (*Transport, error) {
 	if !strSliceContains(t1.TLSClientConfig.NextProtos, "http/1.1") {
 		t1.TLSClientConfig.NextProtos = append(t1.TLSClientConfig.NextProtos, "http/1.1")
 	}
-	upgradeFn := func(authority string, c *tls.Conn) http.RoundTripper {
+	upgradeFn := func(authority string, c http.TLSConn) http.RoundTripper {
 		addr := authorityAddr("https", authority)
 		if used, err := connPool.addConnIfNeeded(addr, t2, c); err != nil {
 			go c.Close()
@@ -211,7 +211,7 @@ func configureTransports(t1 *http.Transport) (*Transport, error) {
 		return t2
 	}
 	if m := t1.TLSNextProto; len(m) == 0 {
-		t1.TLSNextProto = map[string]func(string, *tls.Conn) http.RoundTripper{
+		t1.TLSNextProto = map[string]func(string, http.TLSConn) http.RoundTripper{
 			"h2": upgradeFn,
 		}
 	} else {
@@ -1660,22 +1660,74 @@ func (cc *ClientConn) encodeHeaders(req *http.Request, addGzipHeader bool, trail
 		// target URI (the path-absolute production and optionally a '?' character
 		// followed by the query production (see Sections 3.3 and 3.4 of
 		// [RFC3986]).
-		f(":authority", host)
+
+		pHeaderOrder, ok := req.Header[http.PseudoHeaderOrderKey]
 		m := req.Method
 		if m == "" {
 			m = http.MethodGet
 		}
-		f(":method", m)
-		if req.Method != "CONNECT" {
-			f(":path", path)
-			f(":scheme", req.URL.Scheme)
+		if ok {
+			// Write headers using a given order
+			for _, p := range pHeaderOrder {
+				switch p {
+				case ":authority":
+					f(":authority", host)
+				case ":method":
+					f(":method", req.Method)
+				case ":path":
+					if req.Method != "CONNECT" {
+						f(":path", path)
+					}
+				case ":scheme":
+					if req.Method != "CONNECT" {
+						f(":scheme", req.URL.Scheme)
+					}
+
+				// TODO (zMrKrabz): Currently skips over unrecognized pseudo-header fields,
+				// 	should throw error or something but works for now.
+				default:
+					continue
+				}
+			}
+		} else {
+			f(":authority", host)
+			f(":method", m)
+			if req.Method != "CONNECT" {
+				f(":path", path)
+				f(":scheme", req.URL.Scheme)
+			}
 		}
 		if trailers != "" {
 			f("trailer", trailers)
 		}
 
 		var didUA bool
-		for k, vv := range req.Header {
+		var kvs []http.HeaderKeyValues
+
+		hdrs := req.Header
+		if headerOrder, ok := hdrs[http.HeaderOrderKey]; ok {
+			order := make(map[string]int)
+			for i, v := range headerOrder {
+				order[v] = i
+			}
+			kvs, _ = hdrs.SortedKeyValuesBy(order, make(map[string]bool))
+		} else {
+			kvs, _ = hdrs.SortedKeyValues(make(map[string]bool))
+		}
+
+		if headerOrder, ok := req.Header[http.HeaderOrderKey]; ok {
+			order := make(map[string]int)
+			for i, v := range headerOrder {
+				order[v] = i
+			}
+			kvs, _ = hdrs.SortedKeyValuesBy(order, make(map[string]bool))
+		} else {
+			kvs, _ = hdrs.SortedKeyValues(make(map[string]bool))
+		}
+
+		for _, kv := range kvs {
+			k := kv.Key
+			vv := kv.Values
 			if asciiEqualFold(k, "host") || asciiEqualFold(k, "content-length") {
 				// Host is :authority, already sent.
 				// Content-Length is automatic, set below.

@@ -13,7 +13,7 @@ import (
 )
 
 // dialTLSWithContext opens a TLS connection.
-func (t *Transport) dialTLSWithContext(ctx context.Context, network, addr string, cfg *tls.Config) (*tls.Conn, error) {
+func (t *Transport) dialTLSWithContext(ctx context.Context, network, addr string, cfg *tls.Config) (http.TLSConn, error) {
 	cn, err := tls.Dial(network, addr, cfg)
 	if err != nil {
 		return nil, err

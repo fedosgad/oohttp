@@ -5,7 +5,7 @@
 package http2
 
 import (
-	"net/http"
+	"github.com/ooni/oohttp"
 	"sync"
 )
 

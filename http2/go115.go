@@ -10,11 +10,12 @@ package http2
 import (
 	"context"
 	"crypto/tls"
+	http "github.com/ooni/oohttp"
 )
 
 // dialTLSWithContext uses tls.Dialer, added in Go 1.15, to open a TLS
 // connection.
-func (t *Transport) dialTLSWithContext(ctx context.Context, network, addr string, cfg *tls.Config) (*tls.Conn, error) {
+func (t *Transport) dialTLSWithContext(ctx context.Context, network, addr string, cfg *tls.Config) (http.TLSConn, error) {
 	dialer := &tls.Dialer{
 		Config: cfg,
 	}
@@ -22,6 +23,6 @@ func (t *Transport) dialTLSWithContext(ctx context.Context, network, addr string
 	if err != nil {
 		return nil, err
 	}
-	tlsCn := cn.(*tls.Conn) // DialContext comment promises this will always succeed
+	tlsCn := cn.(http.TLSConn) // DialContext comment promises this will always succeed
 	return tlsCn, nil
 }

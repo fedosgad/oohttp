@@ -11,8 +11,8 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
-	"net/http"
-	"net/http/httptest"
+	"github.com/ooni/oohttp"
+	"github.com/ooni/oohttp/httptest"
 
 	"testing"
 )

@@ -9,7 +9,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"net/http"
+	"github.com/ooni/oohttp"
 	"os/exec"
 	"strconv"
 	"strings"

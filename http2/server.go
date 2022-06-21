@@ -32,11 +32,11 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"github.com/ooni/oohttp"
 	"io"
 	"log"
 	"math"
 	"net"
-	"net/http"
 	"net/textproto"
 	"net/url"
 	"os"
@@ -267,9 +267,9 @@ func ConfigureServer(s *http.Server, conf *Server) error {
 	}
 
 	if s.TLSNextProto == nil {
-		s.TLSNextProto = map[string]func(*http.Server, *tls.Conn, http.Handler){}
+		s.TLSNextProto = map[string]func(*http.Server, http.TLSConn, http.Handler){}
 	}
-	protoHandler := func(hs *http.Server, c *tls.Conn, h http.Handler) {
+	protoHandler := func(hs *http.Server, c http.TLSConn, h http.Handler) {
 		if testHookOnConn != nil {
 			testHookOnConn()
 		}

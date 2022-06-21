@@ -27,16 +27,16 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/ooni/oohttp"
 	"io"
 	"log"
 	"net"
-	"net/http"
 	"os"
 	"regexp"
 	"strconv"
 	"strings"
 
-	"golang.org/x/net/http2"
+	"github.com/ooni/oohttp/http2"
 	"golang.org/x/net/http2/hpack"
 	"golang.org/x/term"
 )
@@ -101,7 +101,7 @@ func withoutPort(addr string) string {
 // h2i is the app's state.
 type h2i struct {
 	host   string
-	tc     *tls.Conn
+	tc     http.TLSConn
 	framer *http2.Framer
 	term   *term.Terminal
 

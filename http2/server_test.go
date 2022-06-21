@@ -13,12 +13,12 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/ooni/oohttp"
+	"github.com/ooni/oohttp/httptest"
 	"io"
 	"io/ioutil"
 	"log"
 	"net"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"reflect"
@@ -2591,6 +2591,7 @@ func TestServer_Rejects_TLS11(t *testing.T) { testRejectTLS(t, tls.VersionTLS11)
 
 func testRejectTLS(t *testing.T, max uint16) {
 	st := newServerTester(t, nil, func(c *tls.Config) {
+		c.MinVersion = max
 		c.MaxVersion = max
 	})
 	defer st.Close()

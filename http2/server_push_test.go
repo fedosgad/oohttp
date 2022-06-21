@@ -7,9 +7,9 @@ package http2
 import (
 	"errors"
 	"fmt"
+	"github.com/ooni/oohttp"
 	"io"
 	"io/ioutil"
-	"net/http"
 	"reflect"
 	"strconv"
 	"sync"
