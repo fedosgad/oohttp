@@ -85,6 +85,7 @@ var (
 
 func badStringError(what, val string) error { return fmt.Errorf("%s %q", what, val) }
 
+// Deprecated: reqWriteExcludeHeader is not used because all headers undergo sorting before being written
 // Headers that Request.Write handles itself and should be skipped.
 var reqWriteExcludeHeader = map[string]bool{
 	"Host":              true, // not in Header map anyway
@@ -614,12 +615,8 @@ func (r *Request) write(w io.Writer, usingProxy bool, extraHeaders Header, waitF
 	}
 
 	// Header lines
-	_, err = fmt.Fprintf(w, "Host: %s\r\n", host)
-	if err != nil {
-		return err
-	}
-	if trace != nil && trace.WroteHeaderField != nil {
-		trace.WroteHeaderField("Host", []string{host})
+	if !r.Header.has("Host") {
+		r.Header.Set("Host", host)
 	}
 
 	// Use the defaultUserAgent unless the Header contains one, which
@@ -629,13 +626,9 @@ func (r *Request) write(w io.Writer, usingProxy bool, extraHeaders Header, waitF
 		userAgent = r.Header.Get("User-Agent")
 	}
 	if userAgent != "" {
-		_, err = fmt.Fprintf(w, "User-Agent: %s\r\n", userAgent)
-		if err != nil {
-			return err
-		}
-		if trace != nil && trace.WroteHeaderField != nil {
-			trace.WroteHeaderField("User-Agent", []string{userAgent})
-		}
+		r.Header.Set("User-Agent", userAgent)
+	} else {
+		r.Header.Del("User-Agent")
 	}
 
 	// Process Body,ContentLength,Close,Trailer
@@ -643,12 +636,12 @@ func (r *Request) write(w io.Writer, usingProxy bool, extraHeaders Header, waitF
 	if err != nil {
 		return err
 	}
-	err = tw.writeHeader(w, trace)
+	err = tw.addHeaders(&r.Header, trace)
 	if err != nil {
 		return err
 	}
 
-	err = r.Header.writeSubset(w, reqWriteExcludeHeader, trace)
+	err = r.Header.write(w, trace)
 	if err != nil {
 		return err
 	}

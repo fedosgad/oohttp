@@ -1645,6 +1645,9 @@ func (cc *ClientConn) encodeHeaders(req *http.Request, addGzipHeader bool, trail
 	// continue to reuse the hpack encoder for future requests)
 	for k, vv := range req.Header {
 		if !httpguts.ValidHeaderFieldName(k) {
+			if k == http.HeaderOrderKey || k == http.PseudoHeaderOrderKey {
+				continue
+			}
 			return nil, fmt.Errorf("invalid HTTP header name %q", k)
 		}
 		for _, v := range vv {
@@ -1673,7 +1676,7 @@ func (cc *ClientConn) encodeHeaders(req *http.Request, addGzipHeader bool, trail
 				case ":authority":
 					f(":authority", host)
 				case ":method":
-					f(":method", req.Method)
+					f(":method", m)
 				case ":path":
 					if req.Method != "CONNECT" {
 						f(":path", path)
@@ -1713,6 +1716,15 @@ func (cc *ClientConn) encodeHeaders(req *http.Request, addGzipHeader bool, trail
 			kvs, _ = hdrs.SortedKeyValuesBy(order, make(map[string]bool))
 		} else {
 			kvs, _ = hdrs.SortedKeyValues(make(map[string]bool))
+		}
+
+		if shouldSendReqContentLength(req.Method, contentLength) {
+			req.Header.Add("content-length", strconv.FormatInt(contentLength, 10))
+		}
+
+		// Does not include accept-encoding header if its defined in req.Header
+		if _, ok := req.Header["accept-encoding"]; !ok && addGzipHeader {
+			req.Header.Add("accept-encoding", "gzip")
 		}
 
 		if headerOrder, ok := req.Header[http.HeaderOrderKey]; ok {
@@ -1784,12 +1796,7 @@ func (cc *ClientConn) encodeHeaders(req *http.Request, addGzipHeader bool, trail
 				f(k, v)
 			}
 		}
-		if shouldSendReqContentLength(req.Method, contentLength) {
-			f("content-length", strconv.FormatInt(contentLength, 10))
-		}
-		if addGzipHeader {
-			f("accept-encoding", "gzip")
-		}
+
 		if !didUA {
 			f("user-agent", defaultUserAgent)
 		}
@@ -1814,6 +1821,11 @@ func (cc *ClientConn) encodeHeaders(req *http.Request, addGzipHeader bool, trail
 
 	// Header list size is ok. Write the headers.
 	enumerateHeaders(func(name, value string) {
+		// skips over writing magic key headers
+		if name == http.PseudoHeaderOrderKey || name == http.HeaderOrderKey {
+			return
+		}
+
 		name, ascii := asciiToLower(name)
 		if !ascii {
 			// Skip writing invalid headers. Per RFC 7540, Section 8.1.2, header
