@@ -1706,25 +1706,36 @@ func (cc *ClientConn) encodeHeaders(req *http.Request, addGzipHeader bool, trail
 
 		var didUA bool
 		var kvs []http.HeaderKeyValues
+		var finalize http.SortFinalizer
+		hdrs := req.Header.Clone()
 
-		hdrs := req.Header
-		if headerOrder, ok := hdrs[http.HeaderOrderKey]; ok {
-			order := make(map[string]int)
-			for i, v := range headerOrder {
-				order[v] = i
+		acceptEncodingPresent := false
+		for k := range req.Header {
+			if asciiEqualFold(k, "accept-encoding") {
+				acceptEncodingPresent = true
+				continue
 			}
-			kvs, _ = hdrs.SortedKeyValuesBy(order, make(map[string]bool))
-		} else {
-			kvs, _ = hdrs.SortedKeyValues(make(map[string]bool))
+
+			// If content-length is not required, but is present in user headers, it is removed.
+			if asciiEqualFold(k, "content-length") {
+				delete(hdrs, k)
+				continue
+			}
+		}
+
+		// Do not include accept-encoding header if it's already defined in req.Header.
+		if !acceptEncodingPresent && addGzipHeader {
+			if hdrs == nil {
+				hdrs = make(http.Header)
+			}
+			hdrs.Set("accept-encoding", "gzip")
 		}
 
 		if shouldSendReqContentLength(req.Method, contentLength) {
-			req.Header.Add("content-length", strconv.FormatInt(contentLength, 10))
-		}
-
-		// Does not include accept-encoding header if its defined in req.Header
-		if _, ok := req.Header["accept-encoding"]; !ok && addGzipHeader {
-			req.Header.Add("accept-encoding", "gzip")
+			if hdrs == nil {
+				hdrs = make(http.Header)
+			}
+			hdrs.Set("content-length", strconv.FormatInt(contentLength, 10))
 		}
 
 		if headerOrder, ok := req.Header[http.HeaderOrderKey]; ok {
@@ -1732,17 +1743,17 @@ func (cc *ClientConn) encodeHeaders(req *http.Request, addGzipHeader bool, trail
 			for i, v := range headerOrder {
 				order[v] = i
 			}
-			kvs, _ = hdrs.SortedKeyValuesBy(order, make(map[string]bool))
+			kvs, finalize = hdrs.SortedKeyValuesBy(order, make(map[string]bool))
 		} else {
-			kvs, _ = hdrs.SortedKeyValues(make(map[string]bool))
+			kvs, finalize = hdrs.SortedKeyValues(make(map[string]bool))
 		}
+		defer finalize()
 
 		for _, kv := range kvs {
 			k := kv.Key
 			vv := kv.Values
-			if asciiEqualFold(k, "host") || asciiEqualFold(k, "content-length") {
+			if asciiEqualFold(k, "host") {
 				// Host is :authority, already sent.
-				// Content-Length is automatic, set below.
 				continue
 			} else if asciiEqualFold(k, "connection") ||
 				asciiEqualFold(k, "proxy-connection") ||

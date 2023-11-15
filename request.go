@@ -615,6 +615,11 @@ func (r *Request) write(w io.Writer, usingProxy bool, extraHeaders Header, waitF
 	}
 
 	// Header lines
+	if r.Header == nil {
+		// r.Header is always required because of header sorting, so create it now.
+		r.Header = make(Header)
+	}
+
 	if !r.Header.has("Host") {
 		r.Header.Set("Host", host)
 	}

@@ -5,6 +5,7 @@
 package http
 
 import (
+	"golang.org/x/net/http/httpguts"
 	"io"
 	"net/textproto"
 	"sort"
@@ -198,13 +199,15 @@ var headerSorterPool = sync.Pool{
 	New: func() any { return new(headerSorter) },
 }
 
+type SortFinalizer func()
+
 var mutex = &sync.RWMutex{}
 
 // SortedKeyValues returns h's keys sorted in the returned kvs
 // slice. The headerSorter used to sort is also returned, for possible
 // return to headerSorterCache.
-func (h Header) SortedKeyValues(exclude map[string]bool) (kvs []HeaderKeyValues, hs *headerSorter) {
-	hs = headerSorterPool.Get().(*headerSorter)
+func (h Header) SortedKeyValues(exclude map[string]bool) (kvs []HeaderKeyValues, finalize SortFinalizer) {
+	hs := headerSorterPool.Get().(*headerSorter)
 	if cap(hs.kvs) < len(h) {
 		hs.kvs = make([]HeaderKeyValues, 0, len(h))
 	}
@@ -218,11 +221,11 @@ func (h Header) SortedKeyValues(exclude map[string]bool) (kvs []HeaderKeyValues,
 	}
 	hs.kvs = kvs
 	sort.Sort(hs)
-	return kvs, hs
+	return kvs, func() { headerSorterPool.Put(hs) }
 }
 
-func (h Header) SortedKeyValuesBy(order map[string]int, exclude map[string]bool) (kvs []HeaderKeyValues, hs *headerSorter) {
-	hs = headerSorterPool.Get().(*headerSorter)
+func (h Header) SortedKeyValuesBy(order map[string]int, exclude map[string]bool) (kvs []HeaderKeyValues, finalize SortFinalizer) {
+	hs := headerSorterPool.Get().(*headerSorter)
 	if cap(hs.kvs) < len(h) {
 		hs.kvs = make([]HeaderKeyValues, 0, len(h))
 	}
@@ -238,7 +241,7 @@ func (h Header) SortedKeyValuesBy(order map[string]int, exclude map[string]bool)
 	hs.order = order
 	sort.Sort(hs)
 
-	return kvs, hs
+	return kvs, func() { headerSorterPool.Put(hs) }
 }
 
 // WriteSubset writes a header in wire format.
@@ -255,7 +258,7 @@ func (h Header) writeSubset(w io.Writer, exclude map[string]bool, trace *httptra
 	}
 
 	var kvs []HeaderKeyValues
-	var sorter *headerSorter
+	var finalize SortFinalizer
 
 	// Check if the HeaderOrder is defined.
 	if headerOrder, ok := h[HeaderOrderKey]; ok {
@@ -270,19 +273,30 @@ func (h Header) writeSubset(w io.Writer, exclude map[string]bool, trace *httptra
 		exclude[HeaderOrderKey] = true
 		exclude[PseudoHeaderOrderKey] = true
 		mutex.Unlock()
-		kvs, sorter = h.SortedKeyValuesBy(order, exclude)
+		kvs, finalize = h.SortedKeyValuesBy(order, exclude)
 	} else {
-		kvs, sorter = h.SortedKeyValues(exclude)
+		kvs, finalize = h.SortedKeyValues(exclude)
 	}
+	defer finalize()
 
 	var formattedVals []string
 	for _, kv := range kvs {
+		if !httpguts.ValidHeaderFieldName(kv.Key) {
+			// This could be an error. In the common case of
+			// writing response headers, however, we have no good
+			// way to provide the error back to the server
+			// handler, so just drop invalid headers instead.
+			//
+			// This also catches HeaderOrderKey and PseudoHeaderOrderKey if they
+			// will make it here.
+			continue
+		}
+
 		for _, v := range kv.Values {
 			v = headerNewlineToSpace.Replace(v)
 			v = textproto.TrimString(v)
 			for _, s := range []string{kv.Key, ": ", v, "\r\n"} {
 				if _, err := ws.WriteString(s); err != nil {
-					headerSorterPool.Put(sorter)
 					return err
 				}
 			}
@@ -295,7 +309,6 @@ func (h Header) writeSubset(w io.Writer, exclude map[string]bool, trace *httptra
 			formattedVals = nil
 		}
 	}
-	headerSorterPool.Put(sorter)
 	return nil
 }
 
