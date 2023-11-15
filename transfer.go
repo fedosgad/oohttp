@@ -196,10 +196,11 @@ func (t *transferWriter) shouldSendChunkedRequestBody() bool {
 // headers before the pipe is fed data), we need to be careful and bound how
 // long we wait for it. This delay will only affect users if all the following
 // are true:
-//   * the request body blocks
-//   * the content length is not set (or set to -1)
-//   * the method doesn't usually have a body (GET, HEAD, DELETE, ...)
-//   * there is no transfer-encoding=chunked already set.
+//   - the request body blocks
+//   - the content length is not set (or set to -1)
+//   - the method doesn't usually have a body (GET, HEAD, DELETE, ...)
+//   - there is no transfer-encoding=chunked already set.
+//
 // In other words, this delay will not normally affect anybody, and there
 // are workarounds if it does.
 func (t *transferWriter) probeRequestBody() {
@@ -285,12 +286,12 @@ func (t *transferWriter) addHeaders(hdrs *Header, trace *httptrace.ClientTrace) 
 	// function of the sanitized field triple (Body, ContentLength,
 	// TransferEncoding)
 	if t.shouldSendContentLength() {
-		hdrs.Add("Content-Length", strconv.FormatInt(t.ContentLength, 10))
+		hdrs.Set("Content-Length", strconv.FormatInt(t.ContentLength, 10))
 		if trace != nil && trace.WroteHeaderField != nil {
 			trace.WroteHeaderField("Content-Length", []string{strconv.FormatInt(t.ContentLength, 10)})
 		}
 	} else if chunked(t.TransferEncoding) {
-		hdrs.Add("Transfer-Encoding", "chunked")
+		hdrs.Set("Transfer-Encoding", "chunked")
 		if trace != nil && trace.WroteHeaderField != nil {
 			trace.WroteHeaderField("Transfer-Encoding", []string{"chunked"})
 		}
@@ -311,7 +312,7 @@ func (t *transferWriter) addHeaders(hdrs *Header, trace *httptrace.ClientTrace) 
 			sort.Strings(keys)
 			// TODO: could do better allocation-wise here, but trailers are rare,
 			// so being lazy for now.
-			hdrs.Add("Trailer", strings.Join(keys, ","))
+			hdrs.Set("Trailer", strings.Join(keys, ","))
 			if trace != nil && trace.WroteHeaderField != nil {
 				trace.WroteHeaderField("Trailer", keys)
 			}
